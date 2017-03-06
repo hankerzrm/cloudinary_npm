@@ -49,16 +49,30 @@ CONDITIONAL_OPERATORS =
   ">=": 'gte'
   "&&": 'and'
   "||": 'or'
+  "*": "mul"
+  "/": "div"
+  "+": "add"
+  "-": "min"
+
 
 CONDITIONAL_PARAMETERS =
-  "aspect_ratio": "ar"
-  "aspectRatio": "ar"
-  "face_count": "fc"
-  "faceCount": "fc"
+  "width": "w"
   "height": "h"
+  "initialWidth": "iw"
+  "initialHeight": "ih"
+  "aspect_ratio": "ar"
+  "initial_aspect_ratio": "iar"
+  "aspectRatio": "ar"
+  "initialAspectRatio": "iar"
   "page_count": "pc"
   "pageCount": "pc"
-  "width": "w"
+  "face_count": "fc"
+  "faceCount": "fc"
+  "current_page": "cp"
+  "currentPage": "cp"
+  "tags": "tags"
+  "pageX": "px"
+  "pageY": "py"
 
 LAYER_KEYWORD_PARAMS =
   font_weight: "normal"
@@ -90,14 +104,18 @@ textStyle = (layer)->
 # Translates the condition if provided.
 # @return [string] "if_" + ifValue
 # @private
+parse_expression = (expression) ->
+  return expression if !_.isString(expression) || expression.match(/^!.+!$/)
+  replaceRE = new RegExp("(" + Object.keys(CONDITIONAL_PARAMETERS).join("|") + "|[=<>&|!*+\\-\\/]+)", "g")
+  expression = expression.replace replaceRE, (match)->
+    CONDITIONAL_OPERATORS[match] || CONDITIONAL_PARAMETERS[match]
+  expression.replace(/[ _]+/g, '_')
+
 process_if = (ifValue)->
   if ifValue
-    replaceRE = new RegExp("(" + Object.keys(CONDITIONAL_PARAMETERS).join("|") + "|[=<>&|!]+)", "g")
-    ifValue = ifValue.replace replaceRE, (match)->
-      CONDITIONAL_OPERATORS[match] || CONDITIONAL_PARAMETERS[match]
-    ifValue = ifValue.replace(/[ _]+/g,'_')
-
-    ifValue = "if_" + ifValue
+    "if_" + parse_expression(ifValue)
+  else
+    ifValue
 
 # Parse layer options
 # @return [string] layer transformation string
@@ -130,7 +148,16 @@ process_layer = (layer)->
       unless _.isEmpty(text)
         unless _.isEmpty(public_id) ^ _.isEmpty(style)
           throw "Must supply either style parameters or a public_id when providing text parameter in a text overlay/underlay"
-        text = smart_escape(text.replace(new RegExp("[,/]", 'g'), (c)-> "%#{c.charCodeAt(0).toString(16).toUpperCase()}"))
+        re = /\$\([a-zA-Z]\w*\)/g
+        start = 0
+#        textSource = text.replace(new RegExp("[,/]", 'g'), (c)-> "%#{c.charCodeAt(0).toString(16).toUpperCase()}")
+        textSource = smart_escape(text, /[,/]/g)
+        text = ""
+        while res = re.exec(textSource)
+          text += smart_escape(textSource.slice(start, res.index))
+          text += res[0]
+          start = res.index + res[0].length
+        text += smart_escape(textSource.slice(start))
 
     components.push(resource_type) if resource_type != "image"
     components.push(type) if type != "upload"
@@ -293,22 +320,28 @@ exports.generate_transformation_string = (options) ->
   ifValue = process_if(utils.option_consume(options, "if"))
 
   params =
-    a: angle
+    a:  parse_expression(angle)
+    ar:  parse_expression(utils.option_consume(options, "aspect_ratio"))
     b: background
     bo: border
     c: crop
     co: color
-    dpr: dpr
+    dpr:  parse_expression(dpr)
     e: effect
     fl: flags
-    h: height
+    h:  parse_expression(height)
     l: overlay
+    o:  parse_expression(utils.option_consume(options, "opacity"))
+    q:  parse_expression(utils.option_consume(options, "quality"))
+    r:  parse_expression(utils.option_consume(options, "radius"))
     t: named_transformation
     u: underlay
-    w: width
+    w:  parse_expression(width)
+    x:  parse_expression(utils.option_consume(options, "x"))
+    y:  parse_expression(utils.option_consume(options, "y"))
+    z:  parse_expression(utils.option_consume(options, "zoom"))
 
   simple_params =
-    aspect_ratio: "ar"
     audio_codec: "ac"
     audio_frequency: "af"
     bit_rate: 'br'
@@ -320,18 +353,12 @@ exports.generate_transformation_string = (options) ->
     end_offset: "eo"
     fetch_format: "f"
     gravity: "g"
-    opacity: "o"
     page: "pg"
     prefix: "p"
-    quality: "q"
-    radius: "r"
     start_offset: "so"
     streaming_profile: "sp"
     video_codec: "vc"
     video_sampling: "vs"
-    x: "x"
-    y: "y"
-    zoom: "z"
 
   for param, short of simple_params
     params[short] = utils.option_consume(options, param)
@@ -340,6 +367,17 @@ exports.generate_transformation_string = (options) ->
   for range_value in ["so", "eo", "du"]
     params[range_value] = norm_range_value(params[range_value]) if range_value of params
 
+  variables = utils.option_consume(options, "variables")
+  var_params = []
+  for key, value of options when key.match(/^\$/)
+    delete options[key]
+    var_params.push "#{key}_#{parse_expression(value)}"
+
+  var_params = var_params.sort()
+  unless _.isEmpty(variables)
+    for [name, value] in variables
+      var_params.push "#{name}_#{parse_expression(value)}"
+  variables = var_params.filter((x)->x).join(',')
   sortedParams = []
   keys = Object.keys(params)
   keys.sort()
@@ -349,8 +387,7 @@ exports.generate_transformation_string = (options) ->
     return
   transformations = sortedParams.join(',')
   raw_transformation = utils.option_consume(options, 'raw_transformation')
-  transformations = _.compact([ifValue, transformations, raw_transformation]).join(",")
-
+  transformations = _.compact([ifValue, variables, transformations, raw_transformation]).join(",")
   base_transformations.push transformations
   transformations = base_transformations
   if responsive_width
@@ -531,8 +568,11 @@ unsigned_url_prefix = (source, cloud_name, private_cdn, cdn_subdomain, secure_cd
 
 
 # Based on CGI::unescape. In addition does not escape / :
-smart_escape = (string)->
-  encodeURIComponent(string).replace(/%3A/g, ":").replace(/%2F/g, "/")
+#smart_escape = (string)->
+#  encodeURIComponent(string).replace(/%3A/g, ":").replace(/%2F/g, "/")
+smart_escape = (string, unsafe = /([^a-zA-Z0-9_.\-\/:]+)/g)->
+  string.replace unsafe, (match)->
+    match.split("").map((c)-> "%"+c.charCodeAt(0).toString(16).toUpperCase()).join("")
 
 # http://kevin.vanzonneveld.net
 # +   original by: Webtoolkit.info (http://www.webtoolkit.info/)
