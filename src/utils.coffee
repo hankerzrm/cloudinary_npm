@@ -55,24 +55,28 @@ CONDITIONAL_OPERATORS =
   "-": "min"
 
 
-CONDITIONAL_PARAMETERS =
-  "width": "w"
-  "height": "h"
-  "initialWidth": "iw"
-  "initialHeight": "ih"
+PREDEFINED_VARS =
   "aspect_ratio": "ar"
-  "initial_aspect_ratio": "iar"
   "aspectRatio": "ar"
-  "initialAspectRatio": "iar"
-  "page_count": "pc"
-  "pageCount": "pc"
-  "face_count": "fc"
-  "faceCount": "fc"
   "current_page": "cp"
   "currentPage": "cp"
-  "tags": "tags"
+  "face_count": "fc"
+  "faceCount": "fc"
+  "height": "h"
+  "initial_aspect_ratio": "iar"
+  "initial_height": "ih"
+  "initial_width": "iw"
+  "initialAspectRatio": "iar"
+  "initialHeight": "ih"
+  "initialWidth": "iw"
+  "page_count": "pc"
+  "page_x": "px"
+  "page_y": "py"
+  "pageCount": "pc"
   "pageX": "px"
   "pageY": "py"
+  "tags": "tags"
+  "width": "w"
 
 LAYER_KEYWORD_PARAMS =
   font_weight: "normal"
@@ -99,27 +103,33 @@ textStyle = (layer)->
     keywords.unshift(font_family)
     _.compact(keywords).join("_")
 
+###*
+  * Parse "if" parameter
+  * Translates the condition if provided.
+  * @return [string] "if_" + ifValue
+  * @private
+###
+normalize_expression = (expression) ->
+  return expression if !_.isString(expression) || expression.length == 0 || expression.match(/^!.+!$/)
 
-# Parse "if" parameter
-# Translates the condition if provided.
-# @return [string] "if_" + ifValue
-# @private
-parse_expression = (expression) ->
-  return expression if !_.isString(expression) || expression.match(/^!.+!$/)
-  replaceRE = new RegExp("(" + Object.keys(CONDITIONAL_PARAMETERS).join("|") + "|[=<>&|!*+\\-\\/]+)", "g")
+  operators = "\\|\\||>=|<=|&&|!=|>|=|<|/|-|\\+|\\*"
+  pattern = "(" + operators + "|" + Object.keys(PREDEFINED_VARS).join("|") + ")"
+  replaceRE = new RegExp(pattern, "g")
   expression = expression.replace replaceRE, (match)->
-    CONDITIONAL_OPERATORS[match] || CONDITIONAL_PARAMETERS[match]
+    CONDITIONAL_OPERATORS[match] || PREDEFINED_VARS[match]
   expression.replace(/[ _]+/g, '_')
 
 process_if = (ifValue)->
   if ifValue
-    "if_" + parse_expression(ifValue)
+    "if_" + normalize_expression(ifValue)
   else
     ifValue
 
-# Parse layer options
-# @return [string] layer transformation string
-# @private
+###*
+  * Parse layer options
+  * @return [string] layer transformation string
+  * @private
+###
 process_layer = (layer)->
   if _.isPlainObject(layer)
     public_id = layer["public_id"]
@@ -202,6 +212,7 @@ exports.build_upload_params = (options) ->
 
 exports.timestamp = ->
   Math.floor(new Date().getTime() / 1000)
+
 ###*
 # Deletes `option_name` from `options` and return the value if present.
 # If `options` doesn't contain `option_name` the default value is returned.
@@ -320,26 +331,26 @@ exports.generate_transformation_string = (options) ->
   ifValue = process_if(utils.option_consume(options, "if"))
 
   params =
-    a:  parse_expression(angle)
-    ar:  parse_expression(utils.option_consume(options, "aspect_ratio"))
+    a: normalize_expression(angle)
+    ar: normalize_expression(utils.option_consume(options, "aspect_ratio"))
     b: background
     bo: border
     c: crop
     co: color
-    dpr:  parse_expression(dpr)
-    e: effect
+    dpr: normalize_expression(dpr)
+    e: normalize_expression(effect)
     fl: flags
-    h:  parse_expression(height)
+    h: normalize_expression(height)
     l: overlay
-    o:  parse_expression(utils.option_consume(options, "opacity"))
-    q:  parse_expression(utils.option_consume(options, "quality"))
-    r:  parse_expression(utils.option_consume(options, "radius"))
+    o: normalize_expression(utils.option_consume(options, "opacity"))
+    q: normalize_expression(utils.option_consume(options, "quality"))
+    r: normalize_expression(utils.option_consume(options, "radius"))
     t: named_transformation
     u: underlay
-    w:  parse_expression(width)
-    x:  parse_expression(utils.option_consume(options, "x"))
-    y:  parse_expression(utils.option_consume(options, "y"))
-    z:  parse_expression(utils.option_consume(options, "zoom"))
+    w: normalize_expression(width)
+    x: normalize_expression(utils.option_consume(options, "x"))
+    y: normalize_expression(utils.option_consume(options, "y"))
+    z: normalize_expression(utils.option_consume(options, "zoom"))
 
   simple_params =
     audio_codec: "ac"
@@ -371,12 +382,12 @@ exports.generate_transformation_string = (options) ->
   var_params = []
   for key, value of options when key.match(/^\$/)
     delete options[key]
-    var_params.push "#{key}_#{parse_expression(value)}"
+    var_params.push "#{key}_#{normalize_expression(value)}"
 
   var_params = var_params.sort()
   unless _.isEmpty(variables)
     for [name, value] in variables
-      var_params.push "#{name}_#{parse_expression(value)}"
+      var_params.push "#{name}_#{normalize_expression(value)}"
   variables = var_params.filter((x)->x).join(',')
   sortedParams = []
   keys = Object.keys(params)
